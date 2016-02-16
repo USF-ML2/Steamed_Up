@@ -1,3 +1,5 @@
+__author__ = 'Brynne Lycette'
+
 import requests
 import json
 import urllib2
