@@ -24,7 +24,7 @@ def get_game_profiles():
     """
     
     #game_jsons = list()
-    with open('game_dataset.txt', 'r') as inFile:
+    with open('game_dataset_w_tags_tester.txt', 'r') as inFile:
         game_jsons = inFile.readlines()
 
     game_profiles = list()
@@ -39,6 +39,7 @@ def get_game_profiles():
             schema = game_json['schema']['game']
             gameID = str(game_json['appid'])
             name = game_json['name']
+            tags = game_json['tags']
             #print gameID
 
             if details[gameID]['success'] != False: #and len(schema) != 0:
@@ -52,38 +53,50 @@ def get_game_profiles():
                     game_features['price'] = float(data['price_overview']['initial'])
                 if 'genres' in keys:
                     game_features['genres'] = [g['description'] for g in data['genres']] #list
-                #else:
-                    #game_features['genres'] = []
-                    
-                # Developers
                 if 'developers' in keys:
-                    game_features['dev'] = data['developers']
-                #else:
-                    #game_features['dev'] = ''
-                    
+                    game_features['dev'] = data['developers'] 
                 game_features['pub'] = data['publishers']
                 game_features['free'] = int(data['is_free'])
-
-                # Categories
                 if 'categories' in keys:
-                    game_features['cat'] = [c['description'] for c in data['categories']] #list
-               # else:
-                    #game_features['cat'] = []
-                    
+                    game_features['cat'] = [c['description'] for c in data['categories']] #list 
                 game_features['year'] = data['release_date']['date'][-4:]
-
                 game_features['appID'] = gameID
                 game_features['name'] = name
-
+                game_features['tags'] = tags
+                
                 game_profiles.append(game_features)
                 #game_dict[name] = game_features
 
-
     return game_profiles
-            
+
+def encode(df, col):
+    col_list = df[col].tolist()
+    columns = set()
+
+    # Collecting unique set
+    for entry in col_list:
+        if type(entry) != float:
+            for e in entry:
+                columns.add(e)
+
+    # Initializing binary genre columns
+    for c in columns:
+        col_name = col+"_"+c
+        df[c] = 0
+
+    # Encoding column values
+    for n in range(len(df)):
+        items = df['genres'].ix[n]
+        if type(items) != float:
+            for i in items:
+                df.set_value(n, i, 1)
+
+    return df
+
 
 def preprocess(df):
 
+    """
     # Encoding genres
     genres_all = df['genres'].tolist()
     genres = set()
@@ -102,9 +115,13 @@ def preprocess(df):
             for g in gs:
                 #df[g].ix[i] = 1
                 df.set_value(i, g, 1)
-                
+    """
+    listed_categorical = ['genres', 'cat', 'tags']
+    for lc in listed_categorical:
+        df = encode(df, lc)
+
     #output = df.copy()
-    categorical = ['dev', 'pub', 'cat', 'achievs', 'free', 'year'] #, 'genres']
+    categorical = ['dev', 'pub', 'achievs', 'free', 'year'] 
 
     for cat in categorical:
         le = LabelEncoder()
@@ -119,11 +136,13 @@ def get_kmodes(n):
 
     df_clean = preprocess(df)
 
-    # drop 'genres' column
+    # drop columns not encoded
     df_x = df.copy()
     df_x = df_x.drop('genres', 1)
     df_x = df_x.drop('name', 1)
     df_x = df_x.drop('appID', 1)
+    df_x = df_x.drop('cat', 1)
+    df_x = df_x.drop('tags', 1)
 
     # kModes clustering
     kmodes_huang = kmodes.KModes(n_clusters = n, init = 'Huang', verbose = 1)
@@ -143,4 +162,4 @@ if __name__ == '__main__':
     df = get_kmodes(30)
 
     print '\n\n'
-    print df.loc[df['cluster'] == 20]['name'] #replace number for any given cluster
+    print df.loc[df['cluster'] == 24]['name'] #replace number for any given cluster
