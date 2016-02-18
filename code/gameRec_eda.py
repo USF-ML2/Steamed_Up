@@ -1,3 +1,5 @@
+__author__ = "Paul Thompson"
+
 import sys, json
 
 ### Genre Counts and Proportions
