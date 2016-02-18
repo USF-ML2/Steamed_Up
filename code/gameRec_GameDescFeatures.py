@@ -1,3 +1,5 @@
+__author__ = "Paul Thompson"
+
 import sys, json, pandas, numpy as np
 from sklearn.feature_extraction import DictVectorizer
 from time import time
