@@ -1,4 +1,6 @@
 __author__ = "Paul Thompson"
+### Extracts Latent Dirichlet Allocation topics from game descriptions. Hope to use as features
+### in content based recommendations.
 
 import sys, json, pandas, numpy as np
 from sklearn.feature_extraction import DictVectorizer
@@ -13,6 +15,10 @@ n_top_words = 20
 game_path = "/Users/paulthompson/Documents/MSAN_Files/Spr1_AdvML/Final_Proj/game_dataset.txt"
 
 def create_game_profile_df(game_data_path):
+    '''
+    :param file path of game data
+    :return: list of game descriptions and list of game names
+    '''
     with open(game_data_path) as f:
         gameDescriptions = []
         gameNames = []
@@ -31,7 +37,12 @@ def create_game_profile_df(game_data_path):
     return gameDescriptions, gameNames
 
 def produceLDATopics():
-    data_samples,gameNames = create_game_profile_df(game_path)
+    '''
+    Takes description of each game and uses sklearn's latent dirichlet allocation and count vectorizer
+    to extract topics.
+    :return: pandas data frame with topic weights for each game (rows) and topic (columns)
+    '''
+    data_samples, gameNames = create_game_profile_df(game_path)
     tf_vectorizer = CountVectorizer(max_df=0.95, min_df=2, max_features=n_features, stop_words='english')
     tf = tf_vectorizer.fit_transform(data_samples)
     lda = LatentDirichletAllocation(n_topics=n_topics, max_iter=5,
@@ -53,5 +64,7 @@ def produceLDATopics():
         print("Topic #%d:" % topic_idx)
         print(" ".join([tf_feature_names[i]
                         for i in topic.argsort()[:-n_top_words - 1:-1]]))
+
+    return topicsByGame
 
 produceLDATopics()

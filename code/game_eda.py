@@ -3,6 +3,10 @@ import sys, json
 
 ### Genre Counts and Proportions
 def genre_cat_info(filepath):
+    '''
+    :param filepath to game info
+    :return: statistics about game genres and categories
+    '''
     genre_eda = dict()
     
     with open(filepath) as f:
@@ -46,6 +50,10 @@ def genre_cat_info(filepath):
         return genre_eda
 
 def count_achievements(filepath):
+    '''
+    :param filepath to game info
+    :return: game achievement counts
+    '''
     count = 0
     game_count = 0
     
