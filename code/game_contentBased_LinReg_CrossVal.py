@@ -2,25 +2,34 @@ import sys, json, pandas, numpy as np, copy
 from sklearn.feature_extraction import DictVectorizer
 from sklearn import linear_model
 from scipy import sparse
+from sklearn.feature_extraction.text import TfidfVectorizer
+from scipy.sparse import hstack
 
 game_path = "/Users/paulthompson/Documents/MSAN_Files/Spr1_AdvML/Final_Proj/gameData.txt"
 user_path = "/Users/paulthompson/Documents/MSAN_Files/Spr1_AdvML/Final_Proj/userData.txt"
 appID_path = "/Users/paulthompson/Documents/MSAN_Files/Spr1_AdvML/Final_Proj/appIDs.json"
+
 
 def create_game_profile_df(game_data_path):
     print "Creating Game Profiles"
     with open(game_data_path) as f:
         gameFeatDicts = []
         gameCount = 0
+        gameNameDict = {}
+        gameNameList = []
         for line in f:
             record = json.loads(line)
             if 'data' in record['details'][record['details'].keys()[0]].keys():
                 gameFeatDict = {}
-                try:
+                if record['details'][record['details'].keys()[0]]['data']['type'] in ['demo','dlc','movie',
+                                                                                      'advertising','video']:
+                    continue
+                # try:
                     # print record['details'][record['details'].keys()[0]]['data']
-                    gameFeatDict['steam_appid'] = record['appid']
-                except:
-                    pass
+                gameFeatDict['steam_appid'] = record['appid']
+                gameNameDict[record['appid']] = record['name']
+                # except:
+                #     pass
                 try:
                     gameFeatDict['mac'] = record['details'][record['details'].keys()[0]]['data']['platforms']['mac']
                 except:
@@ -101,11 +110,27 @@ def create_game_profile_df(game_data_path):
         gameFeaturesNames = vec.get_feature_names()
         gameFeaturesDF = pandas.DataFrame(gameFeatures, columns = gameFeaturesNames)
         gameFeaturesDF.index = gameFeaturesDF['steam_appid']
+        for id in gameFeaturesDF.index:
+            gameNameList.append(gameNameDict[id])
+
+        vectorizer = TfidfVectorizer(sublinear_tf = True, max_df = 1.0, lowercase=False,
+                                 stop_words = 'english', ngram_range = (1,2), analyzer='word', norm = 'l1')
+        X_train_TFIDFNames = vectorizer.fit_transform(gameNameList)
         gameFeaturesDF = gameFeaturesDF.drop(['steam_appid'], axis=1)
         Y_train = pandas.Series(np.zeros(len(gameFeaturesDF)), index = gameFeaturesDF.index)
         X_train_sparse = sparse.coo_matrix(gameFeaturesDF)
+        X_train_sparse2 = hstack([X_train_sparse, X_train_TFIDFNames])
+        X_train = pandas.DataFrame(X_train_sparse2.todense(), index=gameFeaturesDF.index)
         print "Finished Creating Game Profiles"
-        return Y_train, X_train_sparse, gameFeaturesDF
+        return Y_train, X_train_sparse2, X_train
+
+def getAppNames():
+    with open(appID_path) as f:
+        records = json.load(f)
+        IDNameDict = {}
+        for game in records['applist']['apps']['app']:
+            IDNameDict[str(game['appid'])] = game['name']
+    return IDNameDict
 
 ## User Information
 def get_user_games(user_data_path, numToRetrieve):
@@ -135,7 +160,7 @@ def get_user_games(user_data_path, numToRetrieve):
 def CrossValUsingLinReg(userGames, Y_train, X_train, X_train_sparse):
     #
     IDNameDict = getAppNames()
-
+    IDindexDict = {}
     # "Adding user playtime to Response"
     appIDs = []
     ErrorList = [2430]
@@ -149,6 +174,10 @@ def CrossValUsingLinReg(userGames, Y_train, X_train, X_train_sparse):
     gameCount = len(appIDs)
     recAccuracyCount = 0
 
+    for i, id in enumerate(Y_train.index):
+        IDindexDict[id] = i
+
+    print "Linear Regression Cross-Validation"
     for i in range(gameCount):
         # "Splitting Out Training and Test Y and X"
         tempAppIDs = copy.copy(appIDs)
@@ -170,24 +199,23 @@ def CrossValUsingLinReg(userGames, Y_train, X_train, X_train_sparse):
         for k in range(len(unPlayedGames)):
             gamePredictions.append([unPlayedGames[k],predictions[k]])
 
-        print appIDs[i]
+        print IDNameDict[str(appIDs[i])]
         topRecommendations = sorted(gamePredictions, key= lambda x: x[1], reverse = True)[0:50]
 
         if appIDs[i] in np.array(topRecommendations)[:,0]:
             print "Success"
             recAccuracyCount += 1
+            print recAccuracyCount
+            print ""
         else:
             print "Failure"
+            RecList =[]
+            for id in np.array(topRecommendations)[0:10,0]:
+                RecList.append(IDNameDict[str(int(id))])
+            print RecList
+            print ""
     print ""
     print recAccuracyCount, "of the user's games out of", gameCount, "recommended."
-
-def getAppNames():
-    with open(appID_path) as f:
-        records = json.load(f)
-        IDNameDict = {}
-        for game in records['applist']['apps']['app']:
-            IDNameDict[str(game['appid'])] = game['name']
-    return IDNameDict
 
 if __name__ == '__main__':
     print "Getting User Games"
