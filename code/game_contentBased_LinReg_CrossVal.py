@@ -1,4 +1,4 @@
-import sys, json, pandas, numpy as np, copy
+import sys, json, pandas, numpy as np, copy, math, os, collections
 from sklearn.feature_extraction import DictVectorizer
 from sklearn import linear_model
 from scipy import sparse
@@ -6,19 +6,62 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from scipy.sparse import hstack
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
+from sklearn.svm import SVC
 
 game_path = "/Users/paulthompson/Documents/MSAN_Files/Spr1_AdvML/Final_Proj/gameData.txt"
 user_path = "/Users/paulthompson/Documents/MSAN_Files/Spr1_AdvML/Final_Proj/userData.txt"
 appID_path = "/Users/paulthompson/Documents/MSAN_Files/Spr1_AdvML/Final_Proj/appIDs.json"
 
+def getAverageGamePlaytimes():
+    os.environ['SPARK_HOME']="/Users/paulthompson/spark-1.5.2-bin-hadoop2.4"
+    sys.path.append("/Users/paulthompson/spark-1.5.2-bin-hadoop2.4/python/")
+
+    from pyspark import SparkConf, SparkContext
+    from pyspark.sql import SQLContext, Row
+    from pyspark.sql import functions
+    conf = (SparkConf().setMaster("local").setAppName("My app").set("spark.executor.memory", "1g"))
+    sc = SparkContext(conf = conf)
+    sqlContext = SQLContext(sc)
+
+    users_open = open(user_path, 'r+')
+    def nest_dict(filename):
+        listed_dict = []
+        for line in filename:
+            json_lines = json.loads(line)
+            rec_dict = collections.defaultdict(dict)
+            user = json_lines['user']
+            in_response = json_lines['ownedGames']['response']
+            if 'games' in in_response:
+                for i in in_response['games']:
+                    rec_dict[user][i['appid']] = i['playtime_forever']
+                listed_dict.append(rec_dict)
+        return listed_dict
+
+    final_list = nest_dict(users_open)
+    final_RDD = sc.parallelize(final_list)
+    tup_list = []
+    for i in range(len(final_list)):
+        tup_list.extend(final_list[i].values()[0].items())
+    time_count_RDD = sc.parallelize(tup_list)
+    tottime_per_game = time_count_RDD.mapValues(lambda x: (x, 1))\
+                .reduceByKey(lambda x, y: (x[0] + y[0], x[1] + y[1])) \
+                .filter(lambda x: x[1][0] != 0)
+    avg_per_game = tottime_per_game.map(lambda x: (x[0], float(x[1][0])/float(x[1][1]))).collect()
+    game_playtime_dict = {}
+    for game in avg_per_game:
+        game_playtime_dict[game[0]] = game[1]
+    return game_playtime_dict
+
 def create_game_profile_df(game_data_path):
     print "Creating Game Profiles"
+    gamecount = 0
     with open(game_data_path) as f:
         #Initialization
         gameFeatDicts = []; gameCount = 0; gameNameDict = {}; gameNameList = []; gameDescDict = {}; gameDescList = []
 
         #Game File Feature Extraction
         for line in f:
+            gamecount += 1
             record = json.loads(line)
             if 'data' in record['details'][record['details'].keys()[0]].keys():
                 gameFeatDict = {}
@@ -115,6 +158,7 @@ def create_game_profile_df(game_data_path):
         for id in gameFeaturesDF.index:
             gameNameList.append(gameNameDict[id])
             gameDescList.append(gameDescDict[id])
+        print "Game Count", gamecount
 
         #Game Description LDA Mapping
         n_features = 2000
@@ -162,6 +206,7 @@ def getAppNames():
 
 ## User Information
 def get_user_games(user_data_path, numToRetrieve):
+    print "Getting User Games"
     with open(user_data_path) as f:
         linecount = 0; userGamesList = {}; userIDList = []
 
@@ -175,6 +220,7 @@ def get_user_games(user_data_path, numToRetrieve):
                         gameinfo = {}
                         gameinfo['playtime_forever'] = game['playtime_forever']
                         gameinfo['name'] = game['name']
+                        print game['name']
                         gameinfo['appid'] = game['appid']
                         gamesPlayedList.append(gameinfo)
                 linecount += 1
@@ -185,8 +231,8 @@ def get_user_games(user_data_path, numToRetrieve):
                 return userIDList, userGamesList
 
 
-def CrossValUsingLinReg(userGames, Y_train, X_train, X_train_sparse):
-    #
+def CrossValUsingLinReg(userGames, Y_train, X_train, X_train_sparse, gameAverages = None):
+
     IDNameDict = getAppNames()
     IDindexDict = {}
     # "Adding user playtime to Response"
@@ -195,8 +241,11 @@ def CrossValUsingLinReg(userGames, Y_train, X_train, X_train_sparse):
     for game in userGames:
         if game['appid'] not in ErrorList:
             try:
-                Y_train[game['appid']] = game['playtime_forever']
+                Y_train[game['appid']] = np.log(game['playtime_forever'] + 1.01)
                 appIDs.append(game['appid'])
+                # if game['playtime_forever'] > 60:
+                #     Y_train[game['appid']] = 1.0
+                #     appIDs.append(game['appid'])
             except:
                 pass
     gameCount = len(appIDs)
@@ -219,12 +268,12 @@ def CrossValUsingLinReg(userGames, Y_train, X_train, X_train_sparse):
         X_test_sparse = sparse.coo_matrix(X_test)
 
         # "Fitting Linear Model"
-        # regr = linear_model.LinearRegression()
-        regr = linear_model.LinearRegression()
+        # regr = linear_model.ElasticNet(alpha=5.0)
+        regr = SVC(kernel='linear', probability=True)
         regr.fit(X_train_sparse, Y_temp_train)
 
         # "Getting Predictions"
-        predictions = list(regr.predict(X_test_sparse))
+        predictions = list(regr.predict_proba(X_test_sparse)[:,1])
         gamePredictions = []
         for k in range(len(unPlayedGames)):
             gamePredictions.append([unPlayedGames[k],predictions[k]])
@@ -254,7 +303,7 @@ def returnTopLinRegRecs(userGames, Y_train, X_train, X_train_sparse, nRecs = 30)
     for game in userGames:
         if game['appid'] not in ErrorList:
             try:
-                Y_train[game['appid']] = game['playtime_forever']
+                Y_train[game['appid']] = np.log(game['playtime_forever'] + 1.01)
                 appIDs.append(game['appid'])
             except:
                 pass
@@ -280,13 +329,14 @@ def returnTopLinRegRecs(userGames, Y_train, X_train, X_train_sparse, nRecs = 30)
 
 
 if __name__ == '__main__':
-    print "Getting User Games"
+    # gameAvgPlayDict = getAverageGamePlaytimes()
     userIDList, userGamesList = get_user_games(user_path, numToRetrieve = 2)
     PlayTimeZeros, GameDF_sparse, GameDF = create_game_profile_df(game_path)
     selectedUserGames = userGamesList[userIDList[0]]
 
     ### Cross Val for testing
-    # CrossValUsingLinReg(selectedUserGames, PlayTimeZeros, GameDF, GameDF_sparse)
+    # CrossValUsingLinReg(userGames=selectedUserGames, Y_train=PlayTimeZeros, X_train=GameDF,
+    #                     X_train_sparse=GameDF_sparse)
 
     ### Return Single Recommendation list
     IDNameDict = getAppNames()
